@@ -16,15 +16,21 @@ using namespace std::chrono_literals;
 //     co_return;
 // }
 
-corinna::task<> TrivialExample()
+corinna::task<> Inner()
 {
-    std::cout << "Start!" << std::endl;
-    co_await corinna::this_coroutine::suspend_for(1s);
-    std::cout << "End!" << std::endl;
+    std::cout << ", ";
+    co_return;
+}
+
+corinna::task<> HelloWorldExample()
+{
+    std::cout << "Hello";
+    co_await Inner();
+    std::cout << "World!" << std::endl;
 }
 
 int main()
 {
-    corinna::sync_await(TrivialExample());
+    corinna::sync_await(HelloWorldExample());
     // corinna::sync_await(SuspendExample());
 }
