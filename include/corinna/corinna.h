@@ -23,9 +23,10 @@ namespace corinna
 
         task(const task &) = delete;
         auto operator=(const task &) = delete;
-        auto operator=(task &&) = delete;
 
         constexpr task(task &&rhs) noexcept : coroutine_(std::exchange(rhs.coroutine_, {})) {}
+
+        constexpr auto &operator=(task &&rhs) noexcept { std::swap(coroutine_, rhs.coroutine_); }
 
         ~task()
         {
@@ -46,31 +47,34 @@ namespace corinna
             constexpr void await_suspend(std::coroutine_handle<> continuation)
             {
                 coroutine_.promise().continuation_ = continuation;
+
                 if (!coroutine_)
                 {
                     throw "error";
                 }
-
                 coroutine_.resume();
             }
 
             constexpr void await_resume(){};
         };
 
+        template <bool False = false>
+        auto operator co_await() & { static_assert(False, "co_await is forbidden for lvalues"); }
+
         constexpr auto operator co_await() &&noexcept { return awaiter(coroutine_); }
 
-        T result()
-        {
-            // if ()
-            // {
-            //     throw;
-            // }
+        // T result()
+        // {
+        //     if ()
+        //     {
+        //         throw;
+        //     }
 
-            if constexpr (!std::is_same_v<T, void>)
-            {
-                return {};
-            }
-        }
+        //     if constexpr (!std::is_same_v<T, void>)
+        //     {
+        //         return {};
+        //     }
+        // }
     };
 
     template <typename T>
@@ -92,7 +96,6 @@ namespace corinna
                 {
                     return;
                 }
-
                 continuation.resume();
             }
 
@@ -134,10 +137,8 @@ namespace corinna
     template <typename Task>
     auto sync_await(Task &&task)
     {
-        auto make_sync_task = [](Task &&t) -> Task
-        { co_await std::forward<Task>(t); };
-
-        auto sync_task = make_sync_task(std::forward<Task>(task));
+        auto sync_task = [](Task &&task) -> Task
+        { co_await std::move(task); }(std::move(task));
 
         sync_task.coroutine_.resume();
     }
