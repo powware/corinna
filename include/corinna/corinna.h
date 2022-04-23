@@ -1,8 +1,11 @@
+#include <cassert>
 #include <chrono>
 #include <coroutine>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <utility>
+#include <variant>
 
 namespace corinna
 {
@@ -63,18 +66,28 @@ namespace corinna
 
         constexpr auto operator co_await() &&noexcept { return awaiter(coroutine_); }
 
-        // T result()
-        // {
-        //     if ()
-        //     {
-        //         throw;
-        //     }
+        T result()
+        {
+            if constexpr (!std::is_same_v<T, void>)
+            {
+                auto &result = coroutine_.promise().result;
+                if (std::holds_alternative<std::exception_ptr>(result))
+                {
+                    std::rethrow_exception(std::get<std::exception_ptr>(result));
+                }
 
-        //     if constexpr (!std::is_same_v<T, void>)
-        //     {
-        //         return {};
-        //     }
-        // }
+                assert(std::get<T>(result));
+
+                return *std::get<T>(result);
+            }
+            else
+            {
+                if (auto &exception = coroutine_.promise().exception_)
+                {
+                    std::rethrow_exception(exception);
+                }
+            }
+        }
     };
 
     template <typename T>
@@ -83,7 +96,6 @@ namespace corinna
         using coroutine_handle = std::coroutine_handle<typename task<T>::promise_type>;
 
         std::coroutine_handle<> continuation_;
-        std::exception_ptr exception_;
 
         struct final_awaiter
         {
@@ -107,11 +119,6 @@ namespace corinna
         constexpr std::suspend_always initial_suspend() noexcept { return {}; }
 
         constexpr final_awaiter final_suspend() noexcept { return {}; }
-
-        constexpr void unhandled_exception()
-        {
-            exception_ = std::current_exception();
-        }
     };
 
     template <typename T>
@@ -119,9 +126,16 @@ namespace corinna
     {
         using typename task_promise_base<T>::coroutine_handle;
 
+        std::variant<std::optional<T>, std::exception_ptr> result_ = std::nullopt;
+
         auto get_return_object() { return task<T>(coroutine_handle::from_promise(*this)); }
 
-        constexpr T return_value() { return {}; };
+        void unhandled_exception() noexcept
+        {
+            result_ = std::current_exception();
+        }
+
+        void return_value(T value) { result_ = value; };
     };
 
     template <>
@@ -129,7 +143,14 @@ namespace corinna
     {
         using typename task_promise_base<void>::coroutine_handle;
 
+        std::exception_ptr exception_ = nullptr;
+
         auto get_return_object() { return task<void>(coroutine_handle::from_promise(*this)); }
+
+        void unhandled_exception() noexcept
+        {
+            exception_ = std::current_exception();
+        }
 
         constexpr void return_void() noexcept {};
     };
