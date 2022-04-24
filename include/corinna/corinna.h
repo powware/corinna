@@ -58,36 +58,16 @@ namespace corinna
                 coroutine_.resume();
             }
 
-            constexpr void await_resume(){};
+            constexpr T await_resume()
+            {
+                return coroutine_.promise().result();
+            };
         };
 
         template <bool False = false>
         auto operator co_await() & { static_assert(False, "co_await is forbidden for lvalues"); }
 
         constexpr auto operator co_await() &&noexcept { return awaiter(coroutine_); }
-
-        T result()
-        {
-            if constexpr (!std::is_same_v<T, void>)
-            {
-                auto &result = coroutine_.promise().result;
-                if (std::holds_alternative<std::exception_ptr>(result))
-                {
-                    std::rethrow_exception(std::get<std::exception_ptr>(result));
-                }
-
-                assert(std::get<T>(result));
-
-                return *std::get<T>(result);
-            }
-            else
-            {
-                if (auto &exception = coroutine_.promise().exception_)
-                {
-                    std::rethrow_exception(exception);
-                }
-            }
-        }
     };
 
     template <typename T>
@@ -126,7 +106,7 @@ namespace corinna
     {
         using typename task_promise_base<T>::coroutine_handle;
 
-        std::variant<std::optional<T>, std::exception_ptr> result_ = std::nullopt;
+        std::variant<std::optional<T>, std::exception_ptr> result_{std::nullopt};
 
         auto get_return_object() { return task<T>(coroutine_handle::from_promise(*this)); }
 
@@ -136,6 +116,21 @@ namespace corinna
         }
 
         void return_value(T value) { result_ = value; };
+
+        T result()
+        {
+            if constexpr (!std::is_same_v<T, void>)
+            {
+                if (std::holds_alternative<std::exception_ptr>(result_))
+                {
+                    std::rethrow_exception(std::get<std::exception_ptr>(result_));
+                }
+
+                assert(std::get<std::optional<T>>(result_));
+
+                return *std::get<std::optional<T>>(result_);
+            }
+        }
     };
 
     template <>
@@ -143,7 +138,7 @@ namespace corinna
     {
         using typename task_promise_base<void>::coroutine_handle;
 
-        std::exception_ptr exception_ = nullptr;
+        std::exception_ptr exception_{nullptr};
 
         auto get_return_object() { return task<void>(coroutine_handle::from_promise(*this)); }
 
@@ -153,15 +148,24 @@ namespace corinna
         }
 
         constexpr void return_void() noexcept {};
+
+        void result()
+        {
+            if (exception_)
+            {
+                std::rethrow_exception(exception_);
+            }
+        }
     };
 
     template <typename Task>
     auto sync_await(Task &&task)
     {
         auto sync_task = [](Task &&task) -> Task
-        { co_await std::move(task); }(std::move(task));
+        { co_return co_await std::move(task); }(std::move(task));
 
         sync_task.coroutine_.resume();
+        return sync_task.coroutine_.promise().result();
     }
 
     //     namespace this_coroutine

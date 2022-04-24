@@ -1,5 +1,6 @@
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 
 #include <corinna/corinna.h>
 
@@ -29,8 +30,57 @@ corinna::task<> HelloWorldExample()
     std::cout << "World!" << std::endl;
 }
 
+corinna::task<int> Inner2()
+{
+    co_return 42;
+}
+
+corinna::task<int> ReturnValueExample()
+{
+    auto return_value = co_await Inner2();
+    std::cout << "number: " << co_await Inner2() << std::endl;
+    co_return return_value;
+}
+
+corinna::task<int> ExceptionExample()
+{
+    if (co_await Inner2() == 42)
+    {
+        throw std::logic_error("bad number");
+    }
+
+    co_return 0;
+}
+
+// int global;
+// corinna::task<int &> Inner3()
+// {
+//     global = 12;
+//     co_return global;
+// }
+
+// corinna::task<int &> ReturnReferenceExample()
+// {
+//     auto &ref = co_await Inner3();
+//     std::cout << "number: " << ref << std::endl;
+//     ++ref;
+//     co_return global;
+// }
+
 int main()
 {
     corinna::sync_await(HelloWorldExample());
-    // corinna::sync_await(SuspendExample());
+    auto return_value = corinna::sync_await(ReturnValueExample());
+    std::cout << "number still is: " << return_value << std::endl;
+
+    try
+    {
+        auto unused = corinna::sync_await(ExceptionExample());
+        std::cout << "unused is: " << unused << std::endl;
+    }
+    catch (const std::logic_error &exception)
+    {
+        std::cout << "exception: " << exception.what() << std::endl;
+    }
+    // auto return_value = corinna::sync_await(ReturnValueExample());
 }
