@@ -37,9 +37,9 @@ corinna::task<int> Inner2()
 
 corinna::task<int> ReturnValueExample()
 {
-    auto return_value = co_await Inner2();
-    std::cout << "number: " << co_await Inner2() << std::endl;
-    co_return return_value;
+    auto value = co_await Inner2();
+    std::cout << "number: " << value << std::endl;
+    co_return value;
 }
 
 corinna::task<int> ExceptionExample()
@@ -70,8 +70,9 @@ corinna::task<int> ExceptionExample()
 int main()
 {
     corinna::sync_await(HelloWorldExample());
-    auto return_value = corinna::sync_await(ReturnValueExample());
-    std::cout << "number still is: " << return_value << std::endl;
+
+    auto value = corinna::sync_await(ReturnValueExample());
+    std::cout << "number still is: " << value << std::endl;
 
     try
     {
