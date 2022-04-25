@@ -13,13 +13,12 @@ namespace corinna
     struct task_promise;
 
     template <typename T = void>
-    struct [[nodiscard]] task
+    class [[nodiscard]] task
     {
+    public:
         using promise_type = task_promise<T>;
 
         using coroutine_handle = std::coroutine_handle<promise_type>;
-
-        coroutine_handle coroutine_;
 
         explicit task(coroutine_handle coroutine) noexcept : coroutine_(coroutine) {}
 
@@ -70,6 +69,16 @@ namespace corinna
         auto operator co_await() & { static_assert(False, "co_await is forbidden for lvalues"); }
 
         auto operator co_await() &&noexcept { return awaiter(coroutine_); }
+
+        T execute() &&
+        {
+            coroutine_.resume();
+
+            return coroutine_.promise().result();
+        }
+
+    private:
+        coroutine_handle coroutine_;
     };
 
     template <typename T>
@@ -107,9 +116,13 @@ namespace corinna
     template <typename T>
     struct task_promise : task_promise_base<T>
     {
+        static constexpr auto result_lvalue_reference = std::is_lvalue_reference_v<T>;
+
+        using storage_type = std::conditional_t<result_lvalue_reference, std::reference_wrapper<std::remove_reference_t<T>>, T>;
+
         using typename task_promise_base<T>::coroutine_handle;
 
-        std::variant<std::optional<T>, std::exception_ptr> result_{std::nullopt};
+        std::variant<std::optional<storage_type>, std::exception_ptr> result_{std::nullopt};
 
         auto get_return_object() { return task<T>(coroutine_handle::from_promise(*this)); }
 
@@ -118,7 +131,17 @@ namespace corinna
             result_ = std::current_exception();
         }
 
-        void return_value(T value) { result_ = value; };
+        void return_value(auto &&value)
+        {
+            if constexpr (result_lvalue_reference)
+            {
+                result_ = std::ref(value);
+            }
+            else
+            {
+                result_ = std::forward<decltype(value)>(value);
+            }
+        };
 
         T result()
         {
@@ -128,9 +151,16 @@ namespace corinna
             }
 
             // co_return missing in couroutine returning task<T> where T is of non-void type
-            assert(std::get<std::optional<T>>(result_));
+            assert(std::get<std::optional<storage_type>>(result_));
 
-            return *std::get<std::optional<T>>(result_);
+            if constexpr (result_lvalue_reference)
+            {
+                return (*std::get<std::optional<storage_type>>(result_)).get();
+            }
+            else
+            {
+                return std::move(*std::get<std::optional<storage_type>>(result_));
+            }
         }
     };
 
@@ -160,13 +190,12 @@ namespace corinna
     };
 
     template <typename Task>
-    auto sync_await(Task &&task)
+    decltype(auto) sync_await(Task &&task)
     {
         auto sync_task = [](Task &&task) -> Task
         { co_return co_await std::move(task); }(std::move(task));
 
-        sync_task.coroutine_.resume();
-        return sync_task.coroutine_.promise().result();
+        return std::move(sync_task).execute();
     }
 
     //     namespace this_coroutine

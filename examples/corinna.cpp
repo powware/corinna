@@ -52,27 +52,76 @@ corinna::task<int> ExceptionExample()
     co_return 0;
 }
 
-// int global;
-// corinna::task<int &> Inner3()
-// {
-//     global = 12;
-//     co_return global;
-// }
+struct Expensive
+{
+    bool holds_value = true;
+    Expensive()
+    {
+        std::cout << "Expensive()" << std::endl;
+    }
 
-// corinna::task<int &> ReturnReferenceExample()
-// {
-//     auto &ref = co_await Inner3();
-//     std::cout << "number: " << ref << std::endl;
-//     ++ref;
-//     co_return global;
-// }
+    Expensive(const Expensive &rhs) : holds_value(rhs.holds_value)
+    {
+        std::cout << "Expensive(const Expensive &rhs)" << std::endl;
+    }
+
+    auto &operator=(const Expensive &rhs)
+    {
+        holds_value = rhs.holds_value;
+        std::cout << "auto &operator=(const Expensive &rhs)" << std::endl;
+        return *this;
+    }
+
+    Expensive(Expensive &&rhs) : holds_value(std::exchange(rhs.holds_value, false))
+    {
+        std::cout << "Expensive(Expensive &&rhs)" << std::endl;
+    }
+
+    auto &operator=(Expensive &&rhs)
+    {
+        holds_value = std::exchange(rhs.holds_value, false);
+        std::cout << "auto &operator=(Expensive &&rhs)" << std::endl;
+        return *this;
+    }
+
+    ~Expensive()
+    {
+        if (holds_value)
+        {
+            std::cout << "~Expensive()" << std::endl;
+        }
+    }
+};
+
+corinna::task<Expensive> ReturnExpensiveValueExample()
+{
+    Expensive e{};
+    co_return std::move(e);
+}
+
+int global;
+corinna::task<int &> Inner3()
+{
+    global = 12;
+    co_return global;
+}
+
+corinna::task<int &> ReturnReferenceExample()
+{
+    auto &ref = co_await Inner3();
+    std::cout << "number: " << ref << std::endl;
+    ++ref;
+    co_return ref;
+}
 
 int main()
 {
     corinna::sync_await(HelloWorldExample());
 
-    auto value = corinna::sync_await(ReturnValueExample());
-    std::cout << "number still is: " << value << std::endl;
+    {
+        auto value = corinna::sync_await(ReturnValueExample());
+        std::cout << "number still is: " << value << std::endl;
+    }
 
     try
     {
@@ -83,5 +132,13 @@ int main()
     {
         std::cout << "exception: " << exception.what() << std::endl;
     }
-    // auto return_value = corinna::sync_await(ReturnValueExample());
+
+    {
+        auto expensive = corinna::sync_await(ReturnExpensiveValueExample());
+    }
+
+    {
+        auto &value = corinna::sync_await(ReturnReferenceExample());
+        std::cout << "number is now: " << value << std::endl;
+    }
 }
