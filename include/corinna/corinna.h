@@ -9,7 +9,6 @@
 
 namespace corinna
 {
-
     template <typename T>
     struct task_promise;
 
@@ -22,14 +21,14 @@ namespace corinna
 
         coroutine_handle coroutine_;
 
-        explicit constexpr task(coroutine_handle coroutine) noexcept : coroutine_(coroutine) {}
+        explicit task(coroutine_handle coroutine) noexcept : coroutine_(coroutine) {}
 
+        // delete copy and move assignment
         task(const task &) = delete;
         auto operator=(const task &) = delete;
+        auto operator=(task &&) = delete;
 
-        constexpr task(task &&rhs) noexcept : coroutine_(std::exchange(rhs.coroutine_, {})) {}
-
-        constexpr auto &operator=(task &&rhs) noexcept { std::swap(coroutine_, rhs.coroutine_); }
+        task(task &&rhs) noexcept : coroutine_(std::exchange(rhs.coroutine_, {})) {}
 
         ~task()
         {
@@ -43,22 +42,25 @@ namespace corinna
         {
             coroutine_handle coroutine_;
 
-            explicit constexpr awaiter(coroutine_handle coroutine) : coroutine_(coroutine) {}
+            explicit awaiter(coroutine_handle coroutine) noexcept : coroutine_(coroutine) {}
 
-            constexpr bool await_ready() noexcept { return false; }
+            bool await_ready() const noexcept { return false; }
 
-            constexpr void await_suspend(std::coroutine_handle<> continuation)
+            // remember the suspended coroutine, so it can be resumed in the final_awaiter
+            // symmetric transfer by returning the coroutine to be resumed
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<> suspended)
             {
-                coroutine_.promise().continuation_ = continuation;
+                coroutine_.promise().suspended_ = suspended;
 
                 if (!coroutine_)
                 {
                     throw "error";
                 }
-                coroutine_.resume();
+
+                return coroutine_;
             }
 
-            constexpr T await_resume()
+            T await_resume()
             {
                 return coroutine_.promise().result();
             };
@@ -67,7 +69,7 @@ namespace corinna
         template <bool False = false>
         auto operator co_await() & { static_assert(False, "co_await is forbidden for lvalues"); }
 
-        constexpr auto operator co_await() &&noexcept { return awaiter(coroutine_); }
+        auto operator co_await() &&noexcept { return awaiter(coroutine_); }
     };
 
     template <typename T>
@@ -75,30 +77,31 @@ namespace corinna
     {
         using coroutine_handle = std::coroutine_handle<typename task<T>::promise_type>;
 
-        std::coroutine_handle<> continuation_;
+        std::coroutine_handle<> suspended_;
 
         struct final_awaiter
         {
-            constexpr bool await_ready() noexcept { return false; }
+            bool await_ready() const noexcept { return false; }
 
-            void await_suspend(coroutine_handle coroutine) noexcept
+            // symmetric transfer by returning the coroutine to be resumed
+            std::coroutine_handle<> await_suspend(coroutine_handle coroutine) noexcept
             {
-                auto &continuation = coroutine.promise().continuation_;
-                if (!continuation)
+                auto suspended = coroutine.promise().suspended_;
+                if (!suspended)
                 {
-                    return;
+                    return std::noop_coroutine();
                 }
-                continuation.resume();
+
+                return suspended;
             }
 
+            // resuming the final suspend causes the coroutine to be destroyed by walking off the body as well as from the task destructor
             void await_resume() noexcept { std::terminate(); };
         };
 
-        friend final_awaiter;
+        std::suspend_always initial_suspend() noexcept { return {}; }
 
-        constexpr std::suspend_always initial_suspend() noexcept { return {}; }
-
-        constexpr final_awaiter final_suspend() noexcept { return {}; }
+        final_awaiter final_suspend() noexcept { return {}; }
     };
 
     template <typename T>
@@ -119,17 +122,15 @@ namespace corinna
 
         T result()
         {
-            if constexpr (!std::is_same_v<T, void>)
+            if (std::holds_alternative<std::exception_ptr>(result_))
             {
-                if (std::holds_alternative<std::exception_ptr>(result_))
-                {
-                    std::rethrow_exception(std::get<std::exception_ptr>(result_));
-                }
-
-                assert(std::get<std::optional<T>>(result_));
-
-                return *std::get<std::optional<T>>(result_);
+                std::rethrow_exception(std::get<std::exception_ptr>(result_));
             }
+
+            // co_return missing in couroutine returning task<T> where T is of non-void type
+            assert(std::get<std::optional<T>>(result_));
+
+            return *std::get<std::optional<T>>(result_);
         }
     };
 
@@ -147,7 +148,7 @@ namespace corinna
             exception_ = std::current_exception();
         }
 
-        constexpr void return_void() noexcept {};
+        void return_void() const noexcept {};
 
         void result()
         {
