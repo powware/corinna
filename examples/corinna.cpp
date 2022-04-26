@@ -2,20 +2,9 @@
 #include <iostream>
 #include <stdexcept>
 
-#include <corinna/corinna.h>
+#include <corinna/task.h>
 
 using namespace std::chrono_literals;
-
-// corinna::task<> SuspendExample()
-// {
-//     auto start = std::chrono::steady_clock::now();
-//     auto end = std::chrono::steady_clock::now();
-//     std::cout << "Start! (" << std::chrono::duration_cast<std::chrono::seconds>(start - end).count() << "s)\n";
-//     co_await corinna::this_co::suspend_for(1s);
-//     end = std::chrono::steady_clock::now();
-//     std::cout << "End! (" << std::chrono::duration_cast<std::chrono::seconds>(start - end).count() << "s)\n";
-//     co_return;
-// }
 
 corinna::task<> HelloWorldInner()
 {
@@ -119,6 +108,26 @@ corinna::task<int &> ReturnReferenceExample()
     co_return ref;
 }
 
+corinna::task<> SuspendExample()
+{
+    std::cout << "Suspending!" << std::endl;
+    co_await corinna::this_coroutine::suspend_for(1s);
+    std::cout << "Awake from suspend!" << std::endl;
+    co_return;
+}
+
+corinna::task<> SuspendShortlyExample()
+{
+    for (auto i = 0; i < 10; ++i)
+    {
+        std::cout << "Suspending shortly!" << std::endl;
+        co_await corinna::this_coroutine::suspend_for(100ms);
+        std::cout << "Awake from short suspend!" << std::endl;
+    }
+
+    co_return;
+}
+
 int main()
 {
     corinna::sync_await(HelloWorldExample());
@@ -148,5 +157,8 @@ int main()
         std::cout << "global is now: " << global << std::endl;
     }
 
-    return 0;
+    auto start = std::chrono::steady_clock::now();
+    corinna::async_await(SuspendExample(), SuspendShortlyExample(), SuspendExample(), SuspendExample());
+    auto end = std::chrono::steady_clock::now();
+    std::cout << "async_await() took " << std::chrono::duration_cast<std::chrono::seconds>(end - start).count() << "s" << std::endl;
 }

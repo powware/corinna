@@ -1,3 +1,6 @@
+#ifndef __TASK_H__
+#define __TASK_H__
+
 #include <cassert>
 #include <chrono>
 #include <coroutine>
@@ -6,6 +9,8 @@
 #include <thread>
 #include <utility>
 #include <variant>
+
+#include "executor.h"
 
 namespace corinna
 {
@@ -47,16 +52,20 @@ namespace corinna
 
             // remember the suspended coroutine, so it can be resumed in the final_awaiter
             // symmetric transfer by returning the coroutine to be resumed
-            std::coroutine_handle<> await_suspend(std::coroutine_handle<> suspended)
+            template <typename Promise>
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> caller)
             {
-                coroutine_.promise().suspended_ = suspended;
+                coroutine_.promise().caller_ = caller;
 
-                if (!coroutine_)
-                {
-                    throw "error";
-                }
+                auto executor = caller.promise().executor_;
 
-                return coroutine_;
+                coroutine_.promise().executor_ = executor;
+
+                executor->add(executable([]()
+                                         { return true; },
+                                         coroutine_));
+
+                return executor->next();
             }
 
             decltype(auto) await_resume()
@@ -70,14 +79,15 @@ namespace corinna
 
         auto operator co_await() &&noexcept { return awaiter(coroutine_); }
 
-        decltype(auto) execute() &&
+        decltype(auto) execute(executor &executor) &&
         {
+            coroutine_.promise().executor_ = &executor;
             coroutine_.resume();
 
             return coroutine_.promise().result();
         }
 
-    private:
+        // private:
         coroutine_handle coroutine_;
     };
 
@@ -86,22 +96,29 @@ namespace corinna
     {
         using coroutine_handle = std::coroutine_handle<typename task<T>::promise_type>;
 
-        std::coroutine_handle<> suspended_;
+        std::coroutine_handle<> caller_;
+
+        executor *executor_;
 
         struct final_awaiter
         {
             bool await_ready() const noexcept { return false; }
 
             // symmetric transfer by returning the coroutine to be resumed
-            std::coroutine_handle<> await_suspend(coroutine_handle coroutine) noexcept
+            std::coroutine_handle<> await_suspend(coroutine_handle callee) noexcept
             {
-                auto suspended = coroutine.promise().suspended_;
-                if (!suspended)
+                auto caller = callee.promise().caller_;
+
+                auto executor = callee.promise().executor_;
+
+                if (caller)
                 {
-                    return std::noop_coroutine();
+                    executor->add(executable([]()
+                                             { return true; },
+                                             caller));
                 }
 
-                return suspended;
+                return executor->next();
             }
 
             // resuming the final suspend causes the coroutine to be destroyed by walking off the body as well as from the task destructor
@@ -194,41 +211,70 @@ namespace corinna
     template <typename Task>
     decltype(auto) sync_await(Task &&task)
     {
-        return std::move(task).execute();
+        executor e;
+        return std::move(task).execute(e);
     }
 
-    //     namespace this_coroutine
-    //     {
-    //         template <typename Clock, typename Duration>
-    //         struct suspend_awaiter
-    //         {
-    //             using time_point_type = std::chrono::time_point<Clock, Duration>;
+    template <typename Task, typename... Tasks>
+    void async_await_impl(Task &&task, Tasks &&...tasks)
+    {
+        executor e;
+        ((tasks.coroutine_.promise().executor_ = &e), ...);
+        (e.add(executable([]()
+                          { return true; },
+                          std::forward<Tasks>(tasks).coroutine_)),
+         ...);
+        std::move(task).execute(e);
+    }
 
-    //             suspend_awaiter(const time_point_type &time) : resume_point_(time) {}
+    template <typename... Tasks>
+    void async_await(Tasks &&...tasks)
+    {
+        async_await_impl(std::forward<Tasks>(tasks)...);
+    }
 
-    //             bool await_ready() { return Clock::now() >= resume_point_; }
+    namespace this_coroutine
+    {
+        template <typename Clock, typename Duration>
+        struct suspend_awaiter
+        {
+            using time_point_type = std::chrono::time_point<Clock, Duration>;
 
-    //             void await_suspend(std::coroutine_handle<>) {}
+            suspend_awaiter(const time_point_type &time) : resume_point_(time) {}
 
-    //             void await_resume()
-    //             {
-    //                 std::this_thread::sleep_until(resume_point_);
-    //             }
+            bool await_ready() { return Clock::now() >= resume_point_; }
 
-    //             time_point_type resume_point_;
-    //         };
+            template <typename Promise>
+            std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> caller)
+            {
+                auto executor_ = caller.promise().executor_;
+                executor_->add(executable([this]()
+                                          { return await_ready(); },
+                                          caller));
+                return executor_->next();
+            }
 
-    //         template <typename Clock, typename Duration>
-    //         auto suspend_until(const std::chrono::time_point<Clock, Duration> &time)
-    //         {
-    //             return suspend_awaiter(time);
-    //         }
+            void await_resume()
+            {
+                std::this_thread::sleep_until(resume_point_);
+            }
 
-    //         template <typename Rep, typename Period>
-    //         inline auto suspend_for(std::chrono::duration<Rep, Period> duration)
-    //         {
-    //             return suspend_until(std::chrono::steady_clock::now() + duration);
-    //         }
-    //     }
-    // }
+            time_point_type resume_point_;
+        };
+
+        template <typename Clock, typename Duration>
+        auto suspend_until(const std::chrono::time_point<Clock, Duration> &time)
+        {
+            return suspend_awaiter(time);
+        }
+
+        template <typename Rep, typename Period>
+        inline auto suspend_for(std::chrono::duration<Rep, Period> duration)
+        {
+            return suspend_until(std::chrono::steady_clock::now() + duration);
+        }
+    }
+
 }
+
+#endif // __TASK_H__
