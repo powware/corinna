@@ -59,7 +59,7 @@ namespace corinna
                 return coroutine_;
             }
 
-            T await_resume()
+            decltype(auto) await_resume()
             {
                 return coroutine_.promise().result();
             };
@@ -70,7 +70,7 @@ namespace corinna
 
         auto operator co_await() &&noexcept { return awaiter(coroutine_); }
 
-        T execute() &&
+        decltype(auto) execute() &&
         {
             coroutine_.resume();
 
@@ -116,9 +116,9 @@ namespace corinna
     template <typename T>
     struct task_promise : task_promise_base<T>
     {
-        static constexpr auto result_lvalue_reference = std::is_lvalue_reference_v<T>;
+        static constexpr auto is_result_lvalue_reference = std::is_lvalue_reference_v<T>;
 
-        using storage_type = std::conditional_t<result_lvalue_reference, std::reference_wrapper<std::remove_reference_t<T>>, T>;
+        using storage_type = std::conditional_t<is_result_lvalue_reference, std::reference_wrapper<std::remove_reference_t<T>>, std::decay_t<T>>;
 
         using typename task_promise_base<T>::coroutine_handle;
 
@@ -133,7 +133,7 @@ namespace corinna
 
         void return_value(auto &&value)
         {
-            if constexpr (result_lvalue_reference)
+            if constexpr (is_result_lvalue_reference)
             {
                 result_ = std::ref(value);
             }
@@ -143,7 +143,7 @@ namespace corinna
             }
         };
 
-        T result()
+        decltype(auto) result()
         {
             if (std::holds_alternative<std::exception_ptr>(result_))
             {
@@ -153,13 +153,15 @@ namespace corinna
             // co_return missing in couroutine returning task<T> where T is of non-void type
             assert(std::get<std::optional<storage_type>>(result_));
 
-            if constexpr (result_lvalue_reference)
+            if constexpr (is_result_lvalue_reference)
             {
+                // return reference_wrapper content as reference
                 return (*std::get<std::optional<storage_type>>(result_)).get();
             }
             else
             {
-                return std::move(*std::get<std::optional<storage_type>>(result_));
+                // usecase for C++23 auto(std::move(*std::get<std::optional<storage_type>>(result_))) as decay_copy
+                return std::decay_t<T>(std::move(*std::get<std::optional<storage_type>>(result_)));
             }
         }
     };
@@ -192,10 +194,7 @@ namespace corinna
     template <typename Task>
     decltype(auto) sync_await(Task &&task)
     {
-        auto sync_task = [](Task &&task) -> Task
-        { co_return co_await std::move(task); }(std::move(task));
-
-        return std::move(sync_task).execute();
+        return std::move(task).execute();
     }
 
     //     namespace this_coroutine
