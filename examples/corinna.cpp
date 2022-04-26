@@ -17,7 +17,7 @@ using namespace std::chrono_literals;
 //     co_return;
 // }
 
-corinna::task<> Inner()
+corinna::task<> HelloWorldInner()
 {
     std::cout << ", ";
     co_return;
@@ -26,29 +26,28 @@ corinna::task<> Inner()
 corinna::task<> HelloWorldExample()
 {
     std::cout << "Hello";
-    co_await Inner();
+    co_await HelloWorldInner();
     std::cout << "World!" << std::endl;
 }
 
-corinna::task<int> Inner2()
+corinna::task<int> ReturnValueInner()
 {
     co_return 42;
 }
 
 corinna::task<int> ReturnValueExample()
 {
-    auto value = co_await Inner2();
+    auto value = co_await ReturnValueInner();
     std::cout << "number: " << value << std::endl;
     co_return value;
 }
 
 corinna::task<int> ExceptionExample()
 {
-    if (co_await Inner2() == 42)
-    {
-        throw std::logic_error("bad number");
-    }
 
+    throw std::logic_error("error");
+
+    // unreachable
     co_return 0;
 }
 
@@ -93,23 +92,29 @@ struct Expensive
     }
 };
 
+corinna::task<Expensive> ExpensiveInner()
+{
+    Expensive expensive{};
+    co_return expensive;
+}
+
 corinna::task<Expensive> ReturnExpensiveValueExample()
 {
-    Expensive e{};
-    co_return std::move(e);
+    auto expensive = co_await ExpensiveInner();
+    co_return expensive;
 }
 
 int global;
-corinna::task<int &> Inner3()
+corinna::task<int &> ReferenceInner()
 {
     global = 12;
+    std::cout << "global: " << global << std::endl;
     co_return global;
 }
 
 corinna::task<int &> ReturnReferenceExample()
 {
-    auto &ref = co_await Inner3();
-    std::cout << "number: " << ref << std::endl;
+    auto &ref = co_await ReferenceInner();
     ++ref;
     co_return ref;
 }
@@ -125,8 +130,8 @@ int main()
 
     try
     {
-        auto unused = corinna::sync_await(ExceptionExample());
-        std::cout << "unused is: " << unused << std::endl;
+        auto unreachable = corinna::sync_await(ExceptionExample());
+        std::cout << "unreachable is: " << unreachable << std::endl;
     }
     catch (const std::logic_error &exception)
     {
@@ -138,7 +143,10 @@ int main()
     }
 
     {
-        auto &value = corinna::sync_await(ReturnReferenceExample());
-        std::cout << "number is now: " << value << std::endl;
+        auto &ref = corinna::sync_await(ReturnReferenceExample());
+        ++ref;
+        std::cout << "global is now: " << global << std::endl;
     }
+
+    return 0;
 }
