@@ -2,27 +2,29 @@
 
 #include <cppcoro/task.hpp>
 #include <cppcoro/sync_wait.hpp>
+#include <cppcoro/when_all.hpp>
+#include <cppcoro/async_latch.hpp>
 
 using namespace cppcoro;
 
-task<std::string> makeTask()
+task<void> SubTask(auto &latch)
 {
-    co_return "foo";
+    latch.count_down();
+    std::cout << "-> SubTask" << std::endl;
+    co_await latch;
+    std::cout << "<- SubTask" << std::endl;
 }
 
-task<std::string> makeTask2()
+task<void> Task(auto &latch)
 {
-    std::cout << co_await makeTask() << std::endl;
-    std::cout << co_await makeTask() << std::endl;
-    std::cout << co_await makeTask() << std::endl;
-    std::cout << co_await makeTask() << std::endl;
-    std::cout << co_await makeTask() << std::endl;
-    co_return "foo2";
+    std::cout << "-> Task" << std::endl;
+    co_await SubTask(latch);
+    std::cout << "<- Task" << std::endl;
 }
 
 int main()
 {
+    async_latch latch(3);
 
-    // start the lazy task and wait until it completes
-    std::cout << sync_wait(makeTask2()) << std::endl; // -> "foo"
+    sync_wait(when_all_ready(Task(latch), Task(latch), Task(latch)));
 }

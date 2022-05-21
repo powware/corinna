@@ -61,9 +61,9 @@ namespace corinna
 
                 coroutine_.promise().executor_ = executor;
 
-                executor->add(executable([]()
-                                         { return true; },
-                                         coroutine_));
+                executor->schedule(executable([]()
+                                              { return true; },
+                                              coroutine_));
 
                 return executor->next();
             }
@@ -79,11 +79,14 @@ namespace corinna
 
         auto operator co_await() &&noexcept { return awaiter(coroutine_); }
 
-        decltype(auto) execute(executor &executor) &&
+        void execute_on(executor &executor)
         {
             coroutine_.promise().executor_ = &executor;
             coroutine_.resume();
+        }
 
+        decltype(auto) result() &&
+        {
             return coroutine_.promise().result();
         }
 
@@ -113,9 +116,9 @@ namespace corinna
 
                 if (caller)
                 {
-                    executor->add(executable([]()
-                                             { return true; },
-                                             caller));
+                    executor->schedule(executable([]()
+                                                  { return true; },
+                                                  caller));
                 }
 
                 return executor->next();
@@ -212,7 +215,8 @@ namespace corinna
     decltype(auto) sync_await(Task &&task)
     {
         executor e;
-        return std::move(task).execute(e);
+        task.execute_on(e);
+        return std::move(task).result();
     }
 
     template <typename Task, typename... Tasks>
@@ -220,11 +224,11 @@ namespace corinna
     {
         executor e;
         ((tasks.coroutine_.promise().executor_ = &e), ...);
-        (e.add(executable([]()
-                          { return true; },
-                          std::forward<Tasks>(tasks).coroutine_)),
+        (e.schedule(executable([]()
+                               { return true; },
+                               std::forward<Tasks>(tasks).coroutine_)),
          ...);
-        std::move(task).execute(e);
+        task.execute_on(e);
     }
 
     template <typename... Tasks>
@@ -236,11 +240,9 @@ namespace corinna
     namespace this_coroutine
     {
         template <typename Clock, typename Duration>
-        struct suspend_awaiter
+        struct [[nodiscard]] suspend_awaiter
         {
             using time_point_type = std::chrono::time_point<Clock, Duration>;
-
-            suspend_awaiter(const time_point_type &time) : resume_point_(time) {}
 
             bool await_ready() { return Clock::now() >= resume_point_; }
 
@@ -248,9 +250,9 @@ namespace corinna
             std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> caller)
             {
                 auto executor_ = caller.promise().executor_;
-                executor_->add(executable([this]()
-                                          { return await_ready(); },
-                                          caller));
+                executor_->schedule(executable([this]()
+                                               { return await_ready(); },
+                                               caller));
                 return executor_->next();
             }
 
@@ -263,15 +265,20 @@ namespace corinna
         };
 
         template <typename Clock, typename Duration>
-        auto suspend_until(const std::chrono::time_point<Clock, Duration> &time)
+        inline auto suspend_until(const std::chrono::time_point<Clock, Duration> &time)
         {
             return suspend_awaiter(time);
         }
 
         template <typename Rep, typename Period>
-        inline auto suspend_for(std::chrono::duration<Rep, Period> duration)
+        inline auto suspend_for(const std::chrono::duration<Rep, Period> &duration)
         {
             return suspend_until(std::chrono::steady_clock::now() + duration);
+        }
+
+        inline auto schedule_on(executor exec)
+        {
+            return;
         }
     }
 

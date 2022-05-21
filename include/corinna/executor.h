@@ -16,7 +16,7 @@ struct executor
 {
     std::deque<executable> executables_;
 
-    void add(executable &&executable)
+    void schedule(executable &&executable)
     {
         executables_.push_back(std::move(executable));
     }
@@ -30,7 +30,7 @@ struct executor
 
         while (true)
         {
-            auto &&executable = std::move(executables_.front());
+            auto executable = std::move(executables_.front());
             executables_.pop_front();
 
             if (executable.is_ready())

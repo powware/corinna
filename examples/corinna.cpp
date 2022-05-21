@@ -128,6 +128,19 @@ corinna::task<> SuspendShortlyExample()
     co_return;
 }
 
+// corinna::task<> HandleConnection(corinna::connection connection)
+// {
+//     auto data = co_await connection.receive();
+// }
+
+// corinna::task<> f()
+// {
+//     corinna::socket socket();
+//     for (auto connection : co_await socket)
+//     {
+//     }
+// }
+
 int main()
 {
     corinna::sync_await(HelloWorldExample());
